@@ -7,7 +7,7 @@ const ZERO = BigNumber.from('0')
 
 const dfdEthSushiLpHolder = '0x6595732468a241312bc307f327ba0d64f02b3c20'
 
-describe("SushiDFDMiner", function() {
+describe('SushiDFDMiner', function() {
     before('setup contracts', async function() {
         await network.provider.request({
             method: "hardhat_reset",
