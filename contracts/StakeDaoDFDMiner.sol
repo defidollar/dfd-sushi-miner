@@ -5,48 +5,14 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20, SafeMath} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/math/Math.sol";
 
+import {LPTokenWrapper} from "./SushiDFDMiner.sol";
 import "hardhat/console.sol"; // @todo remove
 
-contract LPTokenWrapper {
-    using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-
-    IERC20 public immutable uni;
-
-    uint256 private _totalSupply;
-    mapping(address => uint256) private _balances;
-
-    constructor(address lpToken) public {
-        require(lpToken != address(0), "NULL_ADDRESS");
-        uni = IERC20(lpToken);
-    }
-
-    function totalSupply() public view returns (uint256) {
-        return _totalSupply;
-    }
-
-    function balanceOf(address account) public view returns (uint256) {
-        return _balances[account];
-    }
-
-    function stake(uint256 amount) virtual public {
-        _totalSupply = _totalSupply.add(amount);
-        _balances[msg.sender] = _balances[msg.sender].add(amount);
-        uni.safeTransferFrom(msg.sender, address(this), amount);
-    }
-
-    function withdraw(uint256 amount) virtual public {
-        _totalSupply = _totalSupply.sub(amount);
-        _balances[msg.sender] = _balances[msg.sender].sub(amount);
-        uni.safeTransfer(msg.sender, amount);
-    }
-}
-
-contract SushiDFDMiner is LPTokenWrapper, Ownable {
+contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
     IERC20 public immutable dfd;
-    IERC20 public immutable sushi;
-    IMasterChef public immutable masterChef;
-    uint256 public immutable pid; // sushi pool id
+    IERC20 public immutable sdt;
+    ISDTMaster public immutable masterChef;
+    uint256 public immutable pid; // sdt pool id
 
     uint256 public periodFinish = 0;
     uint256 public rewardRate = 0;
@@ -55,9 +21,9 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public rewards;
 
-    uint256 public sushiPerTokenStored;
-    mapping(address => uint256) public sushiPerTokenPaid;
-    mapping(address => uint256) public sushiRewards;
+    uint256 public sdtPerTokenStored;
+    mapping(address => uint256) public sdtPerTokenPaid;
+    mapping(address => uint256) public sdtRewards;
 
     mapping(address => bool) public rewardDistribution;
 
@@ -65,11 +31,11 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
-    event SushiPaid(address indexed user, uint256 reward);
+    event SdtPaid(address indexed user, uint256 reward);
 
     constructor(
         address _dfd,
-        address _sushi,
+        address _sdt,
         address lpToken,
         address _masterChef,
         uint256 _pid
@@ -78,12 +44,12 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
         LPTokenWrapper(lpToken)
     {
         require(
-           _dfd != address(0) && _sushi != address(0) && _masterChef != address(0),
+           _dfd != address(0) && _sdt != address(0) && _masterChef != address(0),
            "NULL_ADDRESSES"
         );
         dfd = IERC20(_dfd);
-        sushi = IERC20(_sushi);
-        masterChef = IMasterChef(_masterChef);
+        sdt = IERC20(_sdt);
+        masterChef = ISDTMaster(_masterChef);
         pid = _pid;
         IERC20(lpToken).safeApprove(_masterChef, uint(-1));
     }
@@ -97,16 +63,18 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
 
-        uint _then = sushi.balanceOf(address(this));
-        masterChef.withdraw(pid, 0); // harvests sushi
-        sushiPerTokenStored = _sushiPerToken(sushi.balanceOf(address(this)).sub(_then));
+        uint _then = sdt.balanceOf(address(this));
+        masterChef.withdraw(pid, 0); // harvests SDT
+        sdtPerTokenStored = _sdtPerToken(sdt.balanceOf(address(this)).sub(_then));
+
+        sdtPerTokenStored = sdtPerToken();
 
         if (account != address(0)) {
             rewards[account] = _earned(account, rewardPerTokenStored);
             userRewardPerTokenPaid[account] = rewardPerTokenStored;
 
-            sushiRewards[account] = _sushiEarned(account, sushiPerTokenStored);
-            sushiPerTokenPaid[account] = sushiPerTokenStored;
+            sdtRewards[account] = _sdtEarned(account, sdtPerTokenStored);
+            sdtPerTokenPaid[account] = sdtPerTokenStored;
         }
         _;
     }
@@ -129,21 +97,21 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
             );
     }
 
-    function sushiPerToken() public view returns (uint256) {
-        return _sushiPerToken(masterChef.pendingSushi(pid, address(this)));
+    function sdtPerToken() public view returns (uint256) {
+        return _sdtPerToken(masterChef.pendingSdt(pid, address(this)));
     }
 
-    function _sushiPerToken(uint earned_) internal view returns (uint256) {
+    function _sdtPerToken(uint earned_) internal view returns (uint256) {
         uint _totalSupply = totalSupply();
         if (_totalSupply > 0) {
-            return sushiPerTokenStored
+            return sdtPerTokenStored
                 .add(
                     earned_
                     .mul(1e18)
                     .div(_totalSupply)
                 );
         }
-        return sushiPerTokenStored;
+        return sdtPerTokenStored;
     }
 
     function earned(address account) public view returns (uint256) {
@@ -158,16 +126,16 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
                 .add(rewards[account]);
     }
 
-    function sushiEarned(address account) public view returns (uint256) {
-        return _sushiEarned(account, sushiPerToken());
+    function sdtEarned(address account) public view returns (uint256) {
+        return _sdtEarned(account, sdtPerToken());
     }
 
-    function _sushiEarned(address account, uint256 sushiPerToken_) internal view returns (uint256) {
+    function _sdtEarned(address account, uint256 sdtPerToken_) public view returns (uint256) {
         return
             balanceOf(account)
-                .mul(sushiPerToken_.sub(sushiPerTokenPaid[account]))
+                .mul(sdtPerToken_.sub(sdtPerTokenPaid[account]))
                 .div(1e18)
-                .add(sushiRewards[account]);
+                .add(sdtRewards[account]);
     }
 
     // stake visibility is public as overriding LPTokenWrapper's stake() function
@@ -180,7 +148,7 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
 
     function withdraw(uint256 amount) override public updateReward(msg.sender) {
         require(amount > 0, "Cannot withdraw 0");
-        masterChef.withdraw(pid, amount); // harvests sushi
+        masterChef.withdraw(pid, amount); // harvests sdt
         super.withdraw(amount);
         emit Withdrawn(msg.sender, amount);
     }
@@ -197,11 +165,14 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
             dfd.safeTransfer(msg.sender, reward);
             emit RewardPaid(msg.sender, reward);
         }
-        reward = sushiRewards[msg.sender];
+        reward = sdtRewards[msg.sender];
         if (reward > 0) {
-            sushiRewards[msg.sender] = 0;
-            sushi.safeTransfer(msg.sender, reward);
-            emit SushiPaid(msg.sender, reward);
+            if (reward > sdt.balanceOf(address(this))) {
+                masterChef.withdraw(pid, 0); // harvests sdt
+            }
+            sdtRewards[msg.sender] = 0;
+            sdt.safeTransfer(msg.sender, reward);
+            emit SdtPaid(msg.sender, reward);
         }
     }
 
@@ -231,8 +202,8 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     }
 }
 
-interface IMasterChef {
+interface ISDTMaster {
     function deposit(uint256 pid, uint256 amount) external;
     function withdraw(uint256 pid, uint256 amount) external;
-    function pendingSushi(uint256 pid, address user) external view returns(uint);
+    function pendingSdt(uint256 pid, address user) external view returns(uint);
 }
