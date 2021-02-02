@@ -1,26 +1,38 @@
 pragma solidity 0.6.11;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20, SafeMath} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/math/Math.sol";
 
 import {ISynthetixRewards} from "./ISynthetixRewards.sol";
+import {StorageBuffer} from "./proxy/StorageBuffer.sol";
+import {GovernableProxy} from "./proxy/GovernableProxy.sol";
 
-import "hardhat/console.sol"; // @todo remove
-
-contract LPTokenWrapper {
+abstract contract LPTokenWrapper is GovernableProxy, StorageBuffer {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
-    IERC20 public immutable uni;
+    IERC20 public immutable dfd;
+    IERC20 public immutable lpToken;
 
     uint256 private _totalSupply;
     mapping(address => uint256) private _balances;
+    mapping(address => bool) public rewardDistribution;
 
-    constructor(address lpToken) public {
-        require(lpToken != address(0), "NULL_ADDRESS");
-        uni = IERC20(lpToken);
+    modifier onlyRewardDistribution() {
+        require(rewardDistribution[msg.sender], "Caller is not reward distribution");
+        _;
+    }
+
+    modifier updateReward(address account) {
+        _updateReward(account);
+        _;
+    }
+
+    constructor(address _dfd, address _lpToken) public {
+        require(_dfd != address(0) && _lpToken != address(0), "NULL_ADDRESS");
+        dfd = IERC20(_dfd);
+        lpToken = IERC20(_lpToken);
     }
 
     function totalSupply() public view returns (uint256) {
@@ -34,18 +46,26 @@ contract LPTokenWrapper {
     function stake(uint256 amount) virtual public {
         _totalSupply = _totalSupply.add(amount);
         _balances[msg.sender] = _balances[msg.sender].add(amount);
-        uni.safeTransferFrom(msg.sender, address(this), amount);
+        lpToken.safeTransferFrom(msg.sender, address(this), amount);
     }
 
     function withdraw(uint256 amount) virtual public {
         _totalSupply = _totalSupply.sub(amount);
         _balances[msg.sender] = _balances[msg.sender].sub(amount);
-        uni.safeTransfer(msg.sender, amount);
+        lpToken.safeTransfer(msg.sender, amount);
     }
+
+    function setRewardDistribution(address _account, bool _status)
+        external
+        onlyOwner
+    {
+        rewardDistribution[_account] = _status;
+    }
+
+    function _updateReward(address account) virtual internal;
 }
 
-contract JointMiner is LPTokenWrapper, Ownable {
-    IERC20 public immutable dfd;
+contract JointMiner is LPTokenWrapper {
     IERC20 public immutable front;
     ISynthetixRewards public immutable snxRewards;
 
@@ -60,8 +80,6 @@ contract JointMiner is LPTokenWrapper, Ownable {
     mapping(address => uint256) public frontPerTokenPaid;
     mapping(address => uint256) public frontRewards;
 
-    mapping(address => bool) public rewardDistribution;
-
     event RewardAdded(uint256 reward);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
@@ -72,27 +90,20 @@ contract JointMiner is LPTokenWrapper, Ownable {
         address _dfd,
         address _front,
         address _snxRewards,
-        address lpToken
+        address _lpToken
     )
         public
-        LPTokenWrapper(lpToken)
+        LPTokenWrapper(_dfd, _lpToken)
     {
         require(
-           _dfd != address(0) && _front != address(0) && _snxRewards != address(0),
+           _front != address(0) && _snxRewards != address(0),
            "NULL_ADDRESSES"
         );
-        dfd = IERC20(_dfd);
         front = IERC20(_front);
         snxRewards = ISynthetixRewards(_snxRewards);
-        IERC20(lpToken).safeApprove(_snxRewards, uint(-1));
     }
 
-    modifier onlyRewardDistribution() {
-        require(rewardDistribution[_msgSender()], "Caller is not reward distribution");
-        _;
-    }
-
-    modifier updateReward(address account) {
+    function _updateReward(address account) override internal {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
 
@@ -107,7 +118,6 @@ contract JointMiner is LPTokenWrapper, Ownable {
             frontRewards[account] = _frontEarned(account, frontPerTokenStored);
             frontPerTokenPaid[account] = frontPerTokenStored;
         }
-        _;
     }
 
     function lastTimeRewardApplicable() public view returns (uint256) {
@@ -173,6 +183,7 @@ contract JointMiner is LPTokenWrapper, Ownable {
     function stake(uint256 amount) override public updateReward(msg.sender) {
         require(amount > 0, "Cannot stake 0");
         super.stake(amount);
+        lpToken.safeApprove(address(snxRewards), amount);
         snxRewards.stake(amount);
         emit Staked(msg.sender, amount);
     }
@@ -202,13 +213,6 @@ contract JointMiner is LPTokenWrapper, Ownable {
             front.safeTransfer(msg.sender, reward);
             emit FrontPaid(msg.sender, reward);
         }
-    }
-
-    function setRewardDistribution(address _account, bool _status)
-        external
-        onlyOwner
-    {
-        rewardDistribution[_account] = _status;
     }
 
     function notifyRewardAmount(uint256 reward, uint256 duration)

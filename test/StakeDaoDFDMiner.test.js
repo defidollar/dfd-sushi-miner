@@ -22,8 +22,9 @@ describe('StakeDaoDFDMiner', function() {
                 }
             }]
         })
-        const [ StakeDaoDFDMiner ] = await Promise.all([
+        const [ StakeDaoDFDMiner, UpgradableProxy ] = await Promise.all([
             ethers.getContractFactory("StakeDaoDFDMiner"),
+            ethers.getContractFactory("UpgradableProxy")
         ])
         ;([ dfd, sdt, lpToken, masterChef ] = await Promise.all([
             ethers.getContractAt('IERC20', '0x20c36f062a31865bed8a5b1e512d9a1a20aa333a'),
@@ -31,13 +32,16 @@ describe('StakeDaoDFDMiner', function() {
             ethers.getContractAt('IERC20', lpTokenAddress),
             ethers.getContractAt('IMasterChef', '0xfEA5E213bbD81A8a94D0E1eDB09dBD7CEab61e1c')
         ]))
-        sdtDFDMiner = await StakeDaoDFDMiner.deploy(
+        sdtDFDMiner = await UpgradableProxy.deploy()
+        await sdtDFDMiner.updateImplementation((await StakeDaoDFDMiner.deploy(
             dfd.address,
             sdt.address,
             lpToken.address,
             masterChef.address,
             pid
-        )
+        )).address)
+        sdtDFDMiner = await ethers.getContractAt('StakeDaoDFDMiner', sdtDFDMiner.address)
+
         await impersonateAccount(lpTokenHolder)
         signers = await ethers.getSigners()
         alice = signers[0].address

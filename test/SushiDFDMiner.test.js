@@ -22,8 +22,9 @@ describe('SushiDFDMiner', function() {
                 }
             }]
         })
-        const [ SushiDFDMiner ] = await Promise.all([
+        const [ SushiDFDMiner, UpgradableProxy ] = await Promise.all([
             ethers.getContractFactory("SushiDFDMiner"),
+            ethers.getContractFactory("UpgradableProxy")
         ])
         ;([ dfd, sushi, lpToken, masterChef ] = await Promise.all([
             ethers.getContractAt('IERC20', '0x20c36f062a31865bed8a5b1e512d9a1a20aa333a'),
@@ -31,13 +32,15 @@ describe('SushiDFDMiner', function() {
             ethers.getContractAt('IERC20', lpTokenAddress),
             ethers.getContractAt('IMasterChef', '0xc2EdaD668740f1aA35E4D8f227fB8E17dcA888Cd')
         ]))
-        sushiDFDMiner = await SushiDFDMiner.deploy(
+        sushiDFDMiner = await UpgradableProxy.deploy()
+        await sushiDFDMiner.updateImplementation((await SushiDFDMiner.deploy(
             dfd.address,
             sushi.address,
             lpToken.address,
             masterChef.address,
             pid
-        )
+        )).address)
+        sushiDFDMiner = await ethers.getContractAt('SushiDFDMiner', sushiDFDMiner.address)
         await impersonateAccount(dfdEthSushiLpHolder)
         signers = await ethers.getSigners()
         alice = signers[0].address

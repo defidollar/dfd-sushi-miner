@@ -1,15 +1,14 @@
 pragma solidity 0.6.11;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20, SafeMath} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/math/Math.sol";
 
-import {LPTokenWrapper} from "./SushiDFDMiner.sol";
-import "hardhat/console.sol"; // @todo remove
+import {LPTokenWrapper} from "./JointMiner.sol";
+import {StorageBuffer} from "./proxy/StorageBuffer.sol";
+import {GovernableProxy} from "./proxy/GovernableProxy.sol";
 
-contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
-    IERC20 public immutable dfd;
+contract StakeDaoDFDMiner is LPTokenWrapper {
     IERC20 public immutable sdt;
     ISDTMaster public immutable masterChef;
     uint256 public immutable pid; // sdt pool id
@@ -25,8 +24,6 @@ contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
     mapping(address => uint256) public sdtPerTokenPaid;
     mapping(address => uint256) public sdtRewards;
 
-    mapping(address => bool) public rewardDistribution;
-
     event RewardAdded(uint256 reward);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
@@ -36,30 +33,23 @@ contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
     constructor(
         address _dfd,
         address _sdt,
-        address lpToken,
+        address _lpToken,
         address _masterChef,
         uint256 _pid
     )
         public
-        LPTokenWrapper(lpToken)
+        LPTokenWrapper(_dfd, _lpToken)
     {
         require(
            _dfd != address(0) && _sdt != address(0) && _masterChef != address(0),
            "NULL_ADDRESSES"
         );
-        dfd = IERC20(_dfd);
         sdt = IERC20(_sdt);
         masterChef = ISDTMaster(_masterChef);
         pid = _pid;
-        IERC20(lpToken).safeApprove(_masterChef, uint(-1));
     }
 
-    modifier onlyRewardDistribution() {
-        require(rewardDistribution[_msgSender()], "Caller is not reward distribution");
-        _;
-    }
-
-    modifier updateReward(address account) {
+    function _updateReward(address account) override internal {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
 
@@ -76,7 +66,6 @@ contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
             sdtRewards[account] = _sdtEarned(account, sdtPerTokenStored);
             sdtPerTokenPaid[account] = sdtPerTokenStored;
         }
-        _;
     }
 
     function lastTimeRewardApplicable() public view returns (uint256) {
@@ -142,6 +131,7 @@ contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
     function stake(uint256 amount) override public updateReward(msg.sender) {
         require(amount > 0, "Cannot stake 0");
         super.stake(amount);
+        lpToken.safeApprove(address(masterChef), amount);
         masterChef.deposit(pid, amount);
         emit Staked(msg.sender, amount);
     }
@@ -174,13 +164,6 @@ contract StakeDaoDFDMiner is LPTokenWrapper, Ownable {
             sdt.safeTransfer(msg.sender, reward);
             emit SdtPaid(msg.sender, reward);
         }
-    }
-
-    function setRewardDistribution(address _account, bool _status)
-        external
-        onlyOwner
-    {
-        rewardDistribution[_account] = _status;
     }
 
     function notifyRewardAmount(uint256 reward, uint256 duration)

@@ -20,9 +20,10 @@ describe('JointMiner', function() {
                 }
             }]
         })
-        const [ SynthetixRewards, JointMiner ] = await Promise.all([
+        const [ SynthetixRewards, JointMiner, UpgradableProxy ] = await Promise.all([
             ethers.getContractFactory("SynthetixRewards"),
             ethers.getContractFactory("JointMiner"),
+            ethers.getContractFactory("UpgradableProxy")
         ])
         ;([ dfd, front, lpToken ] = await Promise.all([
             ethers.getContractAt('IERC20', '0x20c36f062a31865bed8a5b1e512d9a1a20aa333a'),
@@ -30,7 +31,13 @@ describe('JointMiner', function() {
             ethers.getContractAt('IERC20', '0xAEB0d09B99BEf36256601601BC2e47C938f63ee3'),
         ]))
         frontRewards = await SynthetixRewards.deploy(front.address, lpToken.address)
-        jointMiner = await JointMiner.deploy(dfd.address, front.address, frontRewards.address, lpToken.address)
+
+        jointMiner = await UpgradableProxy.deploy()
+        await jointMiner.updateImplementation(
+            (await JointMiner.deploy(dfd.address, front.address, frontRewards.address, lpToken.address)).address
+        )
+        jointMiner = await ethers.getContractAt('JointMiner', jointMiner.address)
+
         signers = await ethers.getSigners()
         alice = signers[0].address
     })

@@ -1,49 +1,14 @@
 pragma solidity 0.6.11;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20, SafeMath} from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/math/Math.sol";
 
-import "hardhat/console.sol"; // @todo remove
+import {StorageBuffer} from "./proxy/StorageBuffer.sol";
+import {GovernableProxy} from "./proxy/GovernableProxy.sol";
+import {LPTokenWrapper} from "./JointMiner.sol";
 
-contract LPTokenWrapper {
-    using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-
-    IERC20 public immutable uni;
-
-    uint256 private _totalSupply;
-    mapping(address => uint256) private _balances;
-
-    constructor(address lpToken) public {
-        require(lpToken != address(0), "NULL_ADDRESS");
-        uni = IERC20(lpToken);
-    }
-
-    function totalSupply() public view returns (uint256) {
-        return _totalSupply;
-    }
-
-    function balanceOf(address account) public view returns (uint256) {
-        return _balances[account];
-    }
-
-    function stake(uint256 amount) virtual public {
-        _totalSupply = _totalSupply.add(amount);
-        _balances[msg.sender] = _balances[msg.sender].add(amount);
-        uni.safeTransferFrom(msg.sender, address(this), amount);
-    }
-
-    function withdraw(uint256 amount) virtual public {
-        _totalSupply = _totalSupply.sub(amount);
-        _balances[msg.sender] = _balances[msg.sender].sub(amount);
-        uni.safeTransfer(msg.sender, amount);
-    }
-}
-
-contract SushiDFDMiner is LPTokenWrapper, Ownable {
-    IERC20 public immutable dfd;
+contract SushiDFDMiner is LPTokenWrapper {
     IERC20 public immutable sushi;
     IMasterChef public immutable masterChef;
     uint256 public immutable pid; // sushi pool id
@@ -59,8 +24,6 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     mapping(address => uint256) public sushiPerTokenPaid;
     mapping(address => uint256) public sushiRewards;
 
-    mapping(address => bool) public rewardDistribution;
-
     event RewardAdded(uint256 reward);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
@@ -70,30 +33,23 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     constructor(
         address _dfd,
         address _sushi,
-        address lpToken,
+        address _lpToken,
         address _masterChef,
         uint256 _pid
     )
         public
-        LPTokenWrapper(lpToken)
+        LPTokenWrapper(_dfd, _lpToken)
     {
         require(
-           _dfd != address(0) && _sushi != address(0) && _masterChef != address(0),
+           _sushi != address(0) && _masterChef != address(0),
            "NULL_ADDRESSES"
         );
-        dfd = IERC20(_dfd);
         sushi = IERC20(_sushi);
         masterChef = IMasterChef(_masterChef);
         pid = _pid;
-        IERC20(lpToken).safeApprove(_masterChef, uint(-1));
     }
 
-    modifier onlyRewardDistribution() {
-        require(rewardDistribution[_msgSender()], "Caller is not reward distribution");
-        _;
-    }
-
-    modifier updateReward(address account) {
+    function _updateReward(address account) override internal {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
 
@@ -108,7 +64,6 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
             sushiRewards[account] = _sushiEarned(account, sushiPerTokenStored);
             sushiPerTokenPaid[account] = sushiPerTokenStored;
         }
-        _;
     }
 
     function lastTimeRewardApplicable() public view returns (uint256) {
@@ -174,6 +129,7 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
     function stake(uint256 amount) override public updateReward(msg.sender) {
         require(amount > 0, "Cannot stake 0");
         super.stake(amount);
+        lpToken.safeApprove(address(masterChef), amount);
         masterChef.deposit(pid, amount);
         emit Staked(msg.sender, amount);
     }
@@ -203,13 +159,6 @@ contract SushiDFDMiner is LPTokenWrapper, Ownable {
             sushi.safeTransfer(msg.sender, reward);
             emit SushiPaid(msg.sender, reward);
         }
-    }
-
-    function setRewardDistribution(address _account, bool _status)
-        external
-        onlyOwner
-    {
-        rewardDistribution[_account] = _status;
     }
 
     function notifyRewardAmount(uint256 reward, uint256 duration)
