@@ -159,7 +159,7 @@ contract JointMiner is LPTokenWrapper {
         return _frontEarned(account, frontPerToken());
     }
 
-    function _frontEarned(address account, uint256 frontPerToken_) public view returns (uint256) {
+    function _frontEarned(address account, uint256 frontPerToken_) internal view returns (uint256) {
         return
             balanceOf(account)
                 .mul(frontPerToken_.sub(frontPerTokenPaid[account]))

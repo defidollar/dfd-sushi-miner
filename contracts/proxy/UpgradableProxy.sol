@@ -19,14 +19,6 @@ contract UpgradableProxy is GovernableProxy, Proxy {
         }
     }
 
-    // ACLed on onlyOwner via the call to updateImplementation()
-    function updateAndCall(address _newProxyTo, bytes memory data) public {
-        updateImplementation(_newProxyTo);
-        // sometimes required to initialize the contract
-        (bool success, bytes memory returnData) = address(this).call(data);
-        require(success, string(returnData));
-    }
-
     function updateImplementation(address _newProxyTo) public onlyOwner {
         require(_newProxyTo != address(0x0), "INVALID_PROXY_ADDRESS");
         require(isContract(_newProxyTo), "DESTINATION_ADDRESS_IS_NOT_A_CONTRACT");
