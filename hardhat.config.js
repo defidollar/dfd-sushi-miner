@@ -26,11 +26,14 @@ module.exports = {
         mainnet: {
             url: `https://mainnet.infura.io/v3/${process.env.INFURA_PROJECT_ID}`,
             chainId: 1,
-            gasPrice: 103000000000, // 103 gwei
+            gasPrice: 118000000000, // 118 gwei
             accounts: [ PRIVATE_KEY ]
         }
     },
     etherscan: {
         apiKey: `${process.env.ETHERSCAN || ''}`
+    },
+    mocha: {
+        timeout: 0
     }
 };
